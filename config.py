@@ -1,8 +1,10 @@
-from os import environ as env
+import os
 
+from dotenv import load_dotenv
 
+load_dotenv()
 class Config:
-    TELEGRAM_BOT_TOKEN = env["TELEGRAM_BOT_TOKEN"] or ""
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or ""
 
 
 CONF = Config()
