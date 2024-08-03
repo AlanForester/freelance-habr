@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import logging
+import signal
+from contextlib import suppress
 from os.path import join, dirname
 from time import time
 
@@ -50,11 +52,15 @@ async def cmd_start(message: types.Message):
         await message.answer("You " + from_id + " has been already subscribed")
 
 
-async def main():
-    await asyncio.gather(dp.start_polling(bot), parser(), return_exceptions=True)
+async def main(loop):
+    try:
+        await asyncio.gather(dp.start_polling(bot), parser(loop), return_exceptions=True)
+    except Exception:
+        await asyncio.sleep(30, loop=loop)
+        await main(loop)
 
 
-async def parser():
+async def parser(loop):
     print("Start parser")
     url = 'https://freelance.habr.com/tasks?categories=development_backend%2Cdevelopment_bots%2Cdevelopment_other%2Cadmin%2Cdevelopment_frontend%2Cdevelopment_scripts%2Ctesting_sites%2Ccontent_specification%2Cmarketing_sales%2Cmarketing_research%2Cother_audit_analytics'
 
@@ -93,8 +99,30 @@ async def parser():
             for user in users:
                 await bot.send_message(user.user_id, tg_str)
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(30, loop=loop)
+
+
+async def shutdown(sig, loop):
+    print('caught {0}'.format(sig.name))
+    tasks = [task for task in asyncio.Task.all_tasks() if task is not
+             asyncio.tasks.Task.current_task()]
+    print(tasks)
+    for task in tasks:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            print('suppressed error')
+            await task
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    print('finished awaiting cancelled tasks, results: {0}'.format(results))
+    loop.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    asyncio.ensure_future(main(loop), loop=loop)
+    for signame in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signame, lambda: asyncio.ensure_future(shutdown(signame, loop)))
+    try:
+        loop.run_forever()
+    finally:
+        loop.close()
