@@ -4,7 +4,9 @@ import logging
 import signal
 from contextlib import suppress
 from os.path import join, dirname
-from time import time
+from time import time, sleep
+from multiprocessing import Process
+from time import sleep
 
 import requests
 from bs4 import BeautifulSoup
@@ -52,77 +54,56 @@ async def cmd_start(message: types.Message):
         await message.answer("You " + from_id + " has been already subscribed")
 
 
-async def main(loop):
-    try:
-        await asyncio.gather(dp.start_polling(bot), parser(loop), return_exceptions=True)
-    except Exception:
-        await asyncio.sleep(30, loop=loop)
-        await main(loop)
-
-
-async def parser(loop):
-    print("Start parser")
+async def parser(ioloop):
     url = 'https://freelance.habr.com/tasks?categories=development_backend%2Cdevelopment_bots%2Cdevelopment_other%2Cadmin%2Cdevelopment_frontend%2Cdevelopment_scripts%2Ctesting_sites%2Ccontent_specification%2Cmarketing_sales%2Cmarketing_research%2Cother_audit_analytics'
 
-    while True:
-        print("Request: ", datetime.datetime.now())
-        r = requests.get(url)
-        soup = BeautifulSoup(r.text, "html.parser")
-        articles = soup.findAll('article')
-        articles_new = []
-        for article in articles:
-            title_element = article.find("div", class_="task__title")
-            title_element_text = title_element.text
-            link_element = title_element.find("a")
-            link_element_href = link_element["href"]
-            price_element_text = article.find("div", class_="task__price").text
-            try:
-                art = Article.create(link=link_element_href,
-                                     title=title_element_text,
-                                     price=price_element_text,
-                                     sent=True)
-                articles_new.append(art)
-            except:
-                continue
+    print("Request: ", datetime.datetime.now())
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    articles = soup.findAll('article')
+    articles_new = []
+    for article in articles:
+        title_element = article.find("div", class_="task__title")
+        title_element_text = title_element.text
+        link_element = title_element.find("a")
+        link_element_href = link_element["href"]
+        price_element_text = article.find("div", class_="task__price").text
+        try:
+            art = Article.create(link=link_element_href,
+                                 title=title_element_text,
+                                 price=price_element_text,
+                                 sent=True)
+            articles_new.append(art)
+        except:
+            continue
 
-        if len(articles_new) > 0:
-            tg_str = ""
-            for new in articles_new:
-                tg_str += (f'{new.title}\n'
-                           f'Link: https://freelance.habr.com{new.link}\n'
-                           f'Price: {new.price}\n\n')
+    if len(articles_new) > 0:
+        tg_str = ""
+        for new in articles_new:
+            tg_str += (f'{new.title}\n'
+                       f'Link: https://freelance.habr.com{new.link}\n'
+                       f'Price: {new.price}\n\n')
 
-            if tg_str != "":
-                print(tg_str)
+        if tg_str != "":
+            print(tg_str)
 
-            users = User.select()
-            for user in users:
-                await bot.send_message(user.user_id, tg_str)
+        users = User.select()
+        for user in users:
+            await bot.send_message(user.user_id, tg_str)
 
-        await asyncio.sleep(30, loop=loop)
+    await asyncio.sleep(30)
+    await parser(ioloop)
 
 
-async def shutdown(sig, loop):
-    print('caught {0}'.format(sig.name))
-    tasks = [task for task in asyncio.Task.all_tasks() if task is not
-             asyncio.tasks.Task.current_task()]
-    print(tasks)
-    for task in tasks:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            print('suppressed error')
-            await task
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    print('finished awaiting cancelled tasks, results: {0}'.format(results))
-    loop.stop()
+async def main(ioloop):
+    tasks = [ioloop.create_task(dp.start_polling(bot)), ioloop.create_task(parser(ioloop))]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+    for pending_future in pending:
+        pending_future.cancel()
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    asyncio.ensure_future(main(loop), loop=loop)
-    for signame in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signame, lambda: asyncio.ensure_future(shutdown(signame, loop)))
-    try:
-        loop.run_forever()
-    finally:
-        loop.close()
+    ioloop = asyncio.get_event_loop()
+    ioloop.run_until_complete(main(ioloop))
+    ioloop.close()
